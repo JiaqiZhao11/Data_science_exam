@@ -6,32 +6,103 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-library(tidyverse)
-library(cmdstanr)
-library(ggtext)
-library(posterior)
-library(bayesplot)
-library(ggdist)
-library(brms)
+pacman::p_load(
+  tidyverse,
+  brms,
+  cmdstanr,
+  patchwork,
+  here,
+  bbmle,
+  extraDistr,
+  readr,
+  dplyr,
+  future,
+  furrr
+)
 ```
 
-## R Markdown
+```{r}
+#source(here::here("agent.R"))
+source(here::here("Bayes_agent.R"))
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+alpha = seq(0.1,0.5,by = 0.1)
+w1 = seq(0,1,by = 0.2)
+w2 = seq(0,1,by = 0.2)
+percept_precision = 100
+beta = 50
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
 
-```{r cars}
-summary(cars)
+
+parameters = expand.grid(alpha = alpha, w1 =  w1, w2 = w2, percept_precision = percept_precision, beta = beta)
+
+
+
+parameters$id = 1:nrow(parameters)
+
+data_list <- split(parameters, parameters$id)
+
+plan(multisession, workers = 6)
+
+dd = furrr::future_map_dfr(data_list, ~weighted_Bayes_f(.x), .progress = TRUE)
+
+
+
+datatext = dd %>% group_by(alpha,w1,w2,percept_precision,beta) %>% summarize(sse = sum((exp- perceptmu)^2))
+
+dd %>% filter(alpha == 0.2) %>% ggplot()+
+geom_line(aes(x = x, y = exp))+
+
+geom_point(aes(x = x, y = stim-0.1), col = "blue")+
+
+geom_line(aes(x = x, y = perceptmu), col = "green")+
+  facet_grid(w1~w2, labeller = label_both)+
+  geom_text(data = datatext%>% filter(alpha == 0.2), aes(x = 50, y = 0.2, label = round(sse,2)))
+
+
+
+dd %>% filter(w2 == 0.2) %>% ggplot()+
+geom_line(aes(x = x, y = exp))+
+
+geom_point(aes(x = x, y = stim-0.1), col = "blue")+
+
+geom_line(aes(x = x, y = perceptmu), col = "green")+
+  facet_grid(alpha~w1, labeller = label_both)+
+  geom_text(data = datatext%>% filter(w2 == 0.2), aes(x = 50, y = 0.2, label = round(sse,2)))
+
+
+dd %>% filter(w2 == 0.5) %>% ggplot()+
+geom_line(aes(x = x, y = exp))+
+
+geom_point(aes(x = x, y = stim-0.1), col = "blue")+
+
+geom_line(aes(x = x, y = perceptmu), col = "green")+
+  facet_grid(alpha~w1, labeller = label_both)+
+  geom_text(data = datatext%>% filter(w2 == 0.5), aes(x = 50, y = 0.2, label = round(sse,2)))
+
+
+dd %>% ggplot()+
+geom_line(aes(x = x, y = association))+
+
+geom_point(aes(x = x, y = u), col = "blue")+geom_line(aes(x = x, y = desired))+facet_grid(alpha~w1, labeller = label_both)
+
+
+
+
+dd %>% ggplot(aes(as.factor(stim), y = percept))+geom_boxplot()+facet_grid(alpha~w1, labeller = label_both)
+
+
+
+
+dd %>% filter(stim == 1) %>% ggplot(aes(percept, y = exp))+geom_point(aes(col = as.factor(cue)))+geom_smooth(aes(col = as.factor(cue)),method = "lm")+facet_grid(alpha~w1, labeller = label_both)
+
+dd %>% ggplot(aes(as.factor(pred), y = percept, col = as.factor(stim)))+geom_boxplot()+facet_grid(w1~alpha)
+
+
+
+
+
+dd %>% ggplot(aes(exp, y = percept))+geom_point(aes(col = as.factor(stim)))+geom_smooth(aes(col = as.factor(stim)),method = "lm")+facet_grid(alpha~w1, labeller = label_both)
+
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
