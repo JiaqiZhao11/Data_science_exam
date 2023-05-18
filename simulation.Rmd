@@ -17,7 +17,14 @@ pacman::p_load(
   readr,
   dplyr,
   future,
-  furrr
+  furrr,
+  osfr, 
+  lmerTest, 
+  MuMIn, 
+  DHARMa, 
+  tidybayes, 
+  bayesplot, 
+  posterior
 )
 ```
 
@@ -104,5 +111,261 @@ dd %>% ggplot(aes(as.factor(pred), y = percept, col = as.factor(stim)))+geom_box
 dd %>% ggplot(aes(exp, y = percept))+geom_point(aes(col = as.factor(stim)))+geom_smooth(aes(col = as.factor(stim)),method = "lm")+facet_grid(alpha~w1, labeller = label_both)
 
 ```
+```{r}
+source(here::here("Bayes_agent.R"))
 
+alpha = 0.2
+w1 = 0.5
+w2 = 0.1
+percept_precision = 50
+beta = 100
+
+parameters = expand.grid(alpha = alpha, w1 =  w1, w2 = w2, percept_precision = percept_precision, beta = beta)
+
+dd_stan = weighted_Bayes_f(parameters)
+
+dd_stan %>% ggplot()+
+geom_line(aes(x = x, y = exp))+
+
+geom_point(aes(x = x, y = stim-0.1), col = "blue")+
+
+geom_line(aes(x = x, y = percept), col = "green")
+  
+
+
+file <- file.path(here::here("weighted_bayes.stan"))
+mod_bayes <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+
+weighted_bayes_data <- list(
+  ntrials = nrow(dd_stan),
+  cue = dd_stan$cue,
+  stim = dd_stan$stim,
+  u = dd_stan$u,
+  pred = dd_stan$pred,
+  percept = dd_stan$percept,
+  percept_bin = dd_stan$percept_bin
+)
+
+samples <- mod_bayes$sample(
+  data = weighted_bayes_data,
+  seed = 123,
+  chains = 4,
+  parallel_chains = 4,
+  threads_per_chain = 4,
+  iter_warmup = 1000,
+  iter_sampling = 1000,
+  refresh = 100
+)
+```
+```{r}
+samples$cmdstan_diagnose()
+sum = samples$summary()
+```
+
+
+```{r}
+source(here::here("Bayes_agent.R"))
+
+nsubs = 20
+mu_alpha = 0.2
+kappa_alpha = 50
+mu_w1 = 0.5
+kappa_w1 = 50
+mu_w2 = 0.1
+kappa_w2 = 50
+mu_percept_precision = 1
+sd_percept_precision = 1
+mu_beta = 1
+sd_beta = 1
+
+parameters = expand.grid(nsubs = nsubs, 
+                         mu_alpha = mu_alpha, 
+                         kappa_alpha = kappa_alpha, 
+                         mu_w1 =  mu_w1, kappa_w1 = kappa_w1,
+                         mu_w2 = mu_w2, kappa_w2 = kappa_w2, 
+                         mu_percept_precision = mu_percept_precision, 
+                         sd_percept_precision = sd_percept_precision, 
+                         mu_beta = mu_beta, 
+                         sd_beta = sd_beta)
+
+dd_hier = hier_Bayes_f(parameters)
+
+dd_hier[[1]] %>% ggplot()+
+geom_line(aes(x = x, y = association))+
+
+geom_point(aes(x = x, y = u), col = "blue")+
+  facet_wrap(~id)
+```
+
+```{r}
+source(here::here("Bayes_agent.R"))
+
+mu_alpha = seq(0.3,0.3,by = 0.1)
+kappa_alpha = seq(100,100,by = 1)
+
+mu_w1 = seq(0.1,0.1,by = 0.1)
+kappa_w1 = seq(100,100,by = 0.1)
+
+mu_w2 = seq(0.1,0.1,by = 0.1)
+kappa_w2 = seq(100,100,by = 0.1)
+
+
+mu_percept_precision = seq(log(100),log(100),50)
+sd_percept_precision = seq(0.5,0.5,50)
+
+mu_beta = seq(log(50),log(50),20)
+sd_beta = seq(0.5,0.5,20)
+
+nsubs = 5
+
+parameters = expand.grid(nsubs = nsubs, 
+                         mu_alpha = mu_alpha, 
+                         kappa_alpha = kappa_alpha, 
+                         mu_w1 =  mu_w1, kappa_w1 = kappa_w1,
+                         mu_w2 = mu_w2, kappa_w2 = kappa_w2, 
+                         mu_percept_precision = mu_percept_precision, 
+                         sd_percept_precision = sd_percept_precision, 
+                         mu_beta = mu_beta, 
+                         sd_beta = sd_beta)
+
+parameters$id = 1:nrow(parameters)
+
+data_list <- split(parameters, parameters$id)
+
+plan(multisession, workers = 12)
+
+df = hier_Bayes_f(parameters)[[1]]
+hier = hier_Bayes_f(parameters)[[2]]
+```
+
+
+```{r}
+source(here::here("stan_functions.R"))
+
+data = df %>% filter(id %in% unique(id)[1:nsubs])
+
+
+data1 = list(nsubs = length(unique(data$id)),
+            ntrials = nrow(data %>% filter(id %in% unique(id)[1])),
+            percept = as.matrix(data %>% pivot_wider(id_cols = x, names_from = id, values_from = percept)%>% mutate(x= NULL)),
+            pred = as.matrix(data %>% pivot_wider(id_cols = x, names_from = id, values_from = pred)%>% mutate(x= NULL)),
+            percept_bin = as.matrix(data %>% pivot_wider(id_cols = x, names_from = id, values_from = percept_bin)%>% mutate(x= NULL)),
+            stim = as.matrix(data %>% pivot_wider(id_cols = x, names_from = id, values_from = stim)%>% mutate(x= NULL)),
+            cue = as.matrix(data %>% pivot_wider(id_cols = x, names_from = id, values_from = cue)%>% mutate(x= NULL)))
+
+mod = cmdstan_model(here::here("hier_weighted_bayes.stan"))
+
+fit <- mod$sample(
+      data = data1,
+      chains = 4, 
+      parallel_chains = 4,
+      refresh = 100,
+      adapt_delta = 0.80,
+      max_treedepth = 10
+    )
+
+
+
+diag = get_diag(fit = fit,
+         parameter = "alpha")
+
+diag$pairs[[1]]
+
+
+diag = get_diag(fit = fit,
+         parameter = "w1")
+
+diag$pairs[[1]]
+
+
+diag = get_diag(fit = fit,
+         parameter = "w2")
+
+diag$pairs[[1]]
+
+
+diag = get_diag(fit = fit,
+         parameter = "beta")
+
+diag$pairs[[1]]
+
+
+diag = get_diag(fit = fit,
+         parameter = "percept_precision")
+
+diag$pairs[[1]]
+
+
+ppu_hier(fit = fit,
+         parameters = "alpha",
+         reals = hier %>% select(grep("alpha",names(hier), value = TRUE))
+)
+
+
+
+ppu_hier(fit = fit,
+         parameters = "w1",
+         reals = hier %>% select(grep("w1",names(hier), value = TRUE))
+)
+
+
+
+ppu_sub(fit = fit,
+        parameter = "w1",
+        reals = df,
+        lim = 1
+        )
+
+
+ppu_hier(fit = fit,
+         parameters = "w2",
+         reals = hier %>% select(grep("w2",names(hier), value = TRUE))
+)
+
+
+
+ppu_sub(fit = fit,
+        parameter = "w2",
+        reals = df,
+        lim = 1
+        )
+```
+
+```{r}
+df$trial=df$x
+ppcheck(fit, df, 20, prior = TRUE)
+
+```
+
+
+```{r}
+source(here::here("stan_functions.R"))
+
+file <- file.path(here::here("hier_weighted_bayes.stan"))
+mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+
+hier_weighted_bayes_data <- list(
+  nsubs = dd_hier[[2]]$nsubs,
+  ntrials = nrow(dd_hier[[1]])/dd_hier[[2]]$nsubs,
+  cue = dd_hier$cue,
+  stim = dd_hier$stim,
+  #u = dd_hier[[1]]$u,
+  pred = dd_hier$pred,
+  percept = dd_hier$percept,
+  percept_bin = dd_hier$percept_bin
+)
+
+fit <- mod$sample(
+  data = hier_weighted_bayes_data,
+  seed = 123,
+  chains = 4,
+  parallel_chains = 4,
+  threads_per_chain = 4,
+  iter_warmup = 1000,
+  iter_sampling = 1000,
+  refresh = 100
+)
+```
 

@@ -24,8 +24,10 @@ transformed parameters{
   
   vector<lower=0,upper=1>[ntrials] perceptmu; 
   vector<lower=0,upper=1>[ntrials] expect;
-  vector<lower=0,upper=1>[ntrials] association;
+  vector<lower=0,upper=1>[ntrials+1] association;
   vector[ntrials] pe;
+  
+  association[1] = 0.5;
   
   for (t in 1:ntrials){
     
@@ -35,15 +37,8 @@ transformed parameters{
         expect[t] = 1-association[t];
       }
     
-    
-    if(stim[t] == 0){
-      perceptmu[t] = inv_logit(w1 * logit(0.01) + w2 * logit(expect[t]));
-    }else if(stim[t] == 1){
-      perceptmu[t] = inv_logit(w1 * logit(0.99) + w2 * logit(expect[t]));
-    }else{
-      perceptmu[t] = inv_logit(w1 * logit(stim[t]) + w2 * logit(expect[t]));
-    }
-    
+   
+    perceptmu[t] = inv_logit(w1 * logit(stim[t]) + w2 * logit(expect[t]));
     
     
     if(cue[t] == 1){
